@@ -1,0 +1,14 @@
+{
+    "compilerOptions": {
+      "target": "ES2020",                    // Поддержка современных стандартов
+      "module": "ESNext",                    // Модули ES
+      "declaration": true,                   // Генерация файлов .d.ts
+      "outDir": "./dist",                    // Куда складывать итоговые файлы
+      "strict": true,                        // Включить строгую проверку типов
+      "moduleResolution": "node",           // Разрешение модулей
+      "esModuleInterop": true,              // Совместимость с CommonJS
+      "skipLibCheck": true                   // Пропуск проверки типов библиотек
+    },
+    "include": ["src"],                      // Какие файлы включать
+    "exclude": ["node_modules", "dist"]      // Исключения
+  }
