@@ -1,6 +1,6 @@
 {
     "name": "predict-library",
-    "version": "1.0.9",
+    "version": "1.1.1",
     "description": "My awesome TypeScript library",
     "main": "dist/index.js",
     "module": "dist/index.esm.js",

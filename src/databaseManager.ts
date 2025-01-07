@@ -3,6 +3,7 @@ export interface InteractionRecord {
   componentId: string;
   actionType: string;
   timestamp: number;
+  metadata?: Record<string, any>;
 }
 
 type InteractionCallback = (interaction: InteractionRecord) => void;

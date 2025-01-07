@@ -67,18 +67,3 @@ class ComponentTracker {
 }
 
 export default ComponentTracker;
-
-// Example usage in a real project:
-// import ComponentTracker from './componentTracker';
-
-// const tracker = new ComponentTracker();
-// tracker.setOnTrackCallback((component) => {
-//     console.log('Tracked component:', component);
-// });
-
-// tracker.trackComponent('btn-1', 'button', { label: 'Submit' });
-// tracker.trackComponent('page-home', 'page', { title: 'Home Page' });
-
-// console.log(tracker.getTrackedComponents());
-
-// tracker.untrackComponent('btn-1');

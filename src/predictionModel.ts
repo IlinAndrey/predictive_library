@@ -1,5 +1,4 @@
 import DatabaseManager, { InteractionRecord } from './databaseManager';
-import ComponentPreload from './componentPreload';
 
 type InteractionData = {
     componentId: string;
@@ -35,13 +34,6 @@ class PredictionModel {
         this.processHistoricalData(allInteractions);
 
         const predictedAction = this.predictNextAction(Date.now());
-        if (predictedAction) {
-            console.log(`Predicted action after initialization: ${predictedAction}`);
-            const preload = ComponentPreload.getInstance();
-            preload.preloadComponent(predictedAction);
-        } else {
-            console.log('No predicted action could be determined.');
-        }
     }
 
     private processHistoricalData(interactions: InteractionRecord[]): void {
@@ -57,11 +49,6 @@ class PredictionModel {
 
         const nextAction = this.predictNextAction(Date.now());
         console.log(`Predicted next action: ${nextAction}`);
-
-        if (nextAction) {
-            const preload = ComponentPreload.getInstance();
-            preload.preloadComponent(nextAction);
-        }
     }
 
     private updateTransitionMatrix(actionName: string, timestamp: number): void {
@@ -96,9 +83,9 @@ class PredictionModel {
         this.userHistory = [...history.slice(-this.historyLength), { componentId: actionName, timestamp }];
     }
 
-    public predictNextAction(currentTime?: number): string | null {
+    public predictNextAction(timestamp: number) {
         const history = this.userHistory;
-        if (!history.length) return this.getMostFrequentAction();
+        if (!history.length) return { action: this.getMostFrequentAction(), componentId: null };
 
         for (let length = Math.min(4, history.length); length > 1; length--) {
             const pattern = history.slice(-length).map(h => h.componentId).join(',');
@@ -108,13 +95,14 @@ class PredictionModel {
                     return { action, weight: count * this.applyDecay(length) };
                 });
                 const bestAction = weightedActions.reduce((a, b) => (a.weight > b.weight ? a : b)).action;
-                console.log(`Predicted action based on transition matrix: ${bestAction}`);
-                return bestAction;
+                const componentId = history[history.length - 1].componentId;
+                console.log(`Предсказанное действие на основе матрицы переходов: ${bestAction} и компонент: ${componentId}`);
+                return { action: bestAction, componentId };
             }
         }
 
-        if (currentTime) {
-            const currentHour = new Date(currentTime).getHours();
+        if (timestamp) {
+            const currentHour = new Date(timestamp).getHours();
             const timeWeightedAction = Array.from(this.timePatterns.entries()).map(([action, timeData]) => {
                 return { action, weight: timeData.get(currentHour) || 0 };
             }).reduce(
@@ -123,14 +111,14 @@ class PredictionModel {
                 { action: null, weight: 0 }
             );
             if (timeWeightedAction.weight > 0) {
-                console.log(`Predicted action based on time patterns: ${timeWeightedAction.action}`);
-                return timeWeightedAction.action!;
+                console.log(`Предсказанное действие на основе временных паттернов: ${timeWeightedAction.action}`);
+                return { action: timeWeightedAction.action, componentId: null };
             }
         }
 
         const fallbackAction = this.getMostFrequentAction();
-        console.log(`Predicted action based on most frequent action: ${fallbackAction}`);
-        return fallbackAction;
+        console.log(`Предсказанное действие на основе наиболее частого действия: ${fallbackAction}`);
+        return { action: fallbackAction, componentId: null };
     }
 
     private getMostFrequentAction(): string | null {
@@ -140,6 +128,10 @@ class PredictionModel {
 
     private applyDecay(length: number): number {
         return Math.pow(this.decayRate, length);
+    }
+
+    public predict(timestamp: number) {
+        return this.predictNextAction(timestamp);
     }
 }
 
