@@ -5,7 +5,7 @@ class ComponentPreloader {
     private componentTracker: ComponentTracker;
 
     constructor() {
-        this.componentTracker = new ComponentTracker();
+        this.componentTracker = ComponentTracker.getInstance();
     }
 
     /**
@@ -24,7 +24,7 @@ class ComponentPreloader {
      * Предзагружает компонент по его идентификатору.
      * @param componentId Идентификатор компонента для предзагрузки.
      */
-    private preloadComponent(componentId: string): void {
+    public preloadComponent(componentId: string): void {
         const componentData = this.componentTracker.getTrackedComponents().find(c => c.id === componentId);
         if (componentData) {
             const componentCache = new Map<string, any>(); 

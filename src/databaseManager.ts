@@ -21,7 +21,6 @@ class DatabaseManager {
     this.initializeDatabase();
   }
 
-  // Singleton instance getter
   public static getInstance(): DatabaseManager {
     if (!DatabaseManager.instance) {
       DatabaseManager.instance = new DatabaseManager();
@@ -29,7 +28,6 @@ class DatabaseManager {
     return DatabaseManager.instance;
   }
 
-  // Initialize IndexedDB
   private initializeDatabase(): void {
     const request = indexedDB.open(this.dbName, 1);
 
@@ -49,7 +47,6 @@ class DatabaseManager {
     };
   }
 
-  // Add a record to IndexedDB
   public saveInteraction(interaction: InteractionRecord): void {
     const request = indexedDB.open(this.dbName);
 
@@ -75,17 +72,14 @@ class DatabaseManager {
     };
   }
 
-  // Notify subscribers about a saved interaction
   private notifyInteractionSaved(interaction: InteractionRecord): void {
     this.interactionSavedCallbacks.forEach((callback) => callback(interaction));
   }
 
-  // Subscribe to interaction saved events
   public onInteractionSaved(callback: InteractionCallback): void {
     this.interactionSavedCallbacks.push(callback);
   }
 
-  // Get all records from IndexedDB
   public getAllInteractions(): Promise<InteractionRecord[]> {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(this.dbName);
@@ -111,7 +105,6 @@ class DatabaseManager {
     });
   }
 
-  // Clear all records from IndexedDB
   public clearInteractions(): void {
     const request = indexedDB.open(this.dbName);
 
@@ -163,8 +156,6 @@ class DatabaseManager {
 
 }
 
-
-// Automatically initialize the database when the library is loaded
 DatabaseManager.getInstance();
 
 export default DatabaseManager;

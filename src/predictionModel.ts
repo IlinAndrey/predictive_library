@@ -1,7 +1,10 @@
 import DatabaseManager, { InteractionRecord } from './databaseManager';
+import ComponentPreloader from './componentPreloader';
+import ComponentTracker from './componentTracker';
 
 type InteractionData = {
     componentId: string;
+    actionType: string;
     timestamp: number;
 };
 
@@ -12,6 +15,7 @@ class PredictionModel {
     private transitionMatrix: Map<number, Map<string, Map<string, number>>>;
     private globalActionCounter: Map<string, number>;
     private timePatterns: Map<string, Map<number, number>>;
+    private componentTracker: ComponentTracker;
 
     constructor(historyLength = 200, decayRate = 0.9) {
         this.historyLength = historyLength;
@@ -20,8 +24,9 @@ class PredictionModel {
         this.transitionMatrix = new Map();
         this.globalActionCounter = new Map();
         this.timePatterns = new Map();
-
+        this.componentTracker = ComponentTracker.getInstance();
         const databaseManager = DatabaseManager.getInstance();
+        
         databaseManager.onInteractionSaved((interaction) => this.updateModel(interaction));
         console.log('PredictionModel subscribed to database updates.');
     }
@@ -38,20 +43,28 @@ class PredictionModel {
 
     private processHistoricalData(interactions: InteractionRecord[]): void {
         interactions.forEach((interaction) => {
-            this.updateTransitionMatrix(interaction.componentId, interaction.timestamp);
+            this.updateTransitionMatrix(interaction, interaction.timestamp);
         });
         console.log('Processed historical data and updated transition matrix.');
     }
 
     private updateModel(interaction: InteractionRecord): void {
-        this.updateTransitionMatrix(interaction.componentId, interaction.timestamp);
+        this.updateTransitionMatrix(interaction, interaction.timestamp);
         console.log(`Updated model with interaction: ${JSON.stringify(interaction)}`);
 
         const nextAction = this.predictNextAction(Date.now());
-        console.log(`Predicted next action: ${nextAction}`);
+        console.log(`Predicted next action: ${JSON.stringify(nextAction)}`);
+
+        if (nextAction.componentId) {
+            const preloader = new ComponentPreloader();
+            preloader.preloadComponent(nextAction.componentId);
+        } else {
+            console.warn(`Компонент для действия '${nextAction.action}' не найден.`);
+        }
     }
 
-    private updateTransitionMatrix(actionName: string, timestamp: number): void {
+    private updateTransitionMatrix(interaction: InteractionRecord, timestamp: number): void {
+        const actionName = interaction.actionType;
         const date = new Date(timestamp);
         const hour = date.getHours();
 
@@ -67,7 +80,7 @@ class PredictionModel {
 
         if (history.length > 0) {
             for (let length = 2; length <= Math.min(5, history.length); length++) {
-                const pattern = history.slice(-length).map(h => h.componentId).join(',');
+                const pattern = history.slice(-length).map(h => h.actionType).join(',');
                 if (!this.transitionMatrix.has(length)) {
                     this.transitionMatrix.set(length, new Map());
                 }
@@ -80,23 +93,31 @@ class PredictionModel {
             }
         }
 
-        this.userHistory = [...history.slice(-this.historyLength), { componentId: actionName, timestamp }];
+        this.userHistory = [...history.slice(-this.historyLength), { 
+            componentId: interaction.componentId,
+            actionType: actionName,
+            timestamp 
+        }];
     }
 
     public predictNextAction(timestamp: number) {
         const history = this.userHistory;
-        if (!history.length) return { action: this.getMostFrequentAction(), componentId: null };
+        if (!history.length) {
+            const action = this.getMostFrequentAction();
+            const componentId = action ? this.componentTracker.getComponentByAction(action) : null;
+            return { action, componentId };
+        }
 
         for (let length = Math.min(4, history.length); length > 1; length--) {
-            const pattern = history.slice(-length).map(h => h.componentId).join(',');
+            const pattern = history.slice(-length).map(h => h.actionType).join(',');
             const possibleActions = this.transitionMatrix.get(length)?.get(pattern);
             if (possibleActions) {
                 const weightedActions = Array.from(possibleActions.entries()).map(([action, count]) => {
                     return { action, weight: count * this.applyDecay(length) };
                 });
                 const bestAction = weightedActions.reduce((a, b) => (a.weight > b.weight ? a : b)).action;
-                const componentId = history[history.length - 1].componentId;
-                console.log(`Предсказанное действие на основе матрицы переходов: ${bestAction} и компонент: ${componentId}`);
+                const componentId = this.componentTracker.getComponentByAction(bestAction);
+                console.log(`Предсказанное действие на основе матрицы переходов: ${bestAction}`);
                 return { action: bestAction, componentId };
             }
         }
@@ -110,15 +131,17 @@ class PredictionModel {
                     (a.weight > b.weight ? a : b),
                 { action: null, weight: 0 }
             );
-            if (timeWeightedAction.weight > 0) {
+            if (timeWeightedAction.weight > 0 && timeWeightedAction.action) {
+                const componentId = this.componentTracker.getComponentByAction(timeWeightedAction.action);
                 console.log(`Предсказанное действие на основе временных паттернов: ${timeWeightedAction.action}`);
-                return { action: timeWeightedAction.action, componentId: null };
+                return { action: timeWeightedAction.action, componentId };
             }
         }
 
         const fallbackAction = this.getMostFrequentAction();
+        const componentId = fallbackAction ? this.componentTracker.getComponentByAction(fallbackAction) : null;
         console.log(`Предсказанное действие на основе наиболее частого действия: ${fallbackAction}`);
-        return { action: fallbackAction, componentId: null };
+        return { action: fallbackAction, componentId };
     }
 
     private getMostFrequentAction(): string | null {
