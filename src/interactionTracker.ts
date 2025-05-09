@@ -1,3 +1,4 @@
+//interactionTracker.ts
 import DatabaseManager from './databaseManager';
 import ComponentTracker from './componentTracker';
 

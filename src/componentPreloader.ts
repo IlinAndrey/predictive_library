@@ -1,3 +1,4 @@
+//componentPreloader.ts
 import predictionModelInstance from './predictionModel';
 import ComponentTracker from './componentTracker';
 
@@ -18,7 +19,7 @@ class ComponentPreloader {
         if (prediction.componentId) {
             this.preloadComponent(prediction.componentId);
         } else {
-            console.warn('Не удалось предсказать следующий компонент для предзагрузки.');
+            console.warn('Context error');
         }
     }
 

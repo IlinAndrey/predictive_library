@@ -1,3 +1,4 @@
+//componentTracker.ts
 interface ComponentData {
     id: string;
     type: string;
