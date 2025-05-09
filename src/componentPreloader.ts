@@ -11,9 +11,6 @@ class ComponentPreloader {
         this.componentCache = new Map<string, any>();
     }
 
-    /**
-     * Предзагружает следующий предсказанный компонент.
-     */
     public preloadNextComponent(): void {
         const prediction = predictionModelInstance.predict(Date.now());
         if (prediction.componentId) {
@@ -23,10 +20,6 @@ class ComponentPreloader {
         }
     }
 
-    /**
-     * Предзагружает компонент по его идентификатору.
-     * @param componentId Идентификатор компонента для предзагрузки.
-     */
     public preloadComponent(componentId: string): void {
         if (this.componentCache.has(componentId)) {
             console.log(`Компонент ${componentId} уже предзагружен и находится в кэше.`);

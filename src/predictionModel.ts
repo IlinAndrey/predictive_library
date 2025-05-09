@@ -1,5 +1,3 @@
-// predictionModel.ts
-
 import DatabaseManager, { InteractionRecord } from './databaseManager';
 import ComponentPreloader from './componentPreloader';
 import ComponentTracker from './componentTracker';
@@ -13,6 +11,17 @@ type InteractionData = {
     region?: string;
 };
 
+const ENCRYPTION_KEY_HEX = process.env.ENCRYPTION_KEY;
+if (!ENCRYPTION_KEY_HEX) {
+  throw new Error('ENCRYPTION_KEY is not defined in .env or build configuration');
+}
+if (ENCRYPTION_KEY_HEX.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(ENCRYPTION_KEY_HEX)) {
+  throw new Error(`ENCRYPTION_KEY must be a 64-character hexadecimal string. Got: "${ENCRYPTION_KEY_HEX}"`);
+}
+const ENCRYPTION_KEY = new Uint8Array(
+  ENCRYPTION_KEY_HEX.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16))
+);
+
 class PredictionModel {
     private historyLength: number;
     private decayLambda: number;
@@ -25,37 +34,233 @@ class PredictionModel {
     private maxPatternLength: number;
     private weightSequence: number;
     private weightTime: number;
+    private appId: string | null;
+    private serverUrl: string;
+    private minActionsThreshold: number;
+    private dailyUploadInterval: NodeJS.Timeout | null;
 
     constructor(
+        serverUrl: string = 'http://localhost:3001',
         historyLength = 100,
         decayLambda = 0.0005,
         smoothingFactor = 1,
         weightSequence = 0.7,
         weightTime = 0.3,
-        maxPatternLength = 5
+        maxPatternLength = 5,
+        minActionsThreshold = 50
     ) {
+        this.appId = null;
+        this.serverUrl = serverUrl;
         this.historyLength = historyLength;
         this.decayLambda = decayLambda;
         this.smoothingFactor = smoothingFactor;
         this.weightSequence = weightSequence;
         this.weightTime = weightTime;
         this.maxPatternLength = maxPatternLength;
+        this.minActionsThreshold = minActionsThreshold;
 
         this.userHistory = [];
         this.transitionMatrix = new Map();
         this.globalActionCounter = new Map();
         this.timePatterns = new Map();
         this.componentTracker = ComponentTracker.getInstance();
+        this.dailyUploadInterval = null;
 
         const databaseManager = DatabaseManager.getInstance();
         databaseManager.onInteractionSaved((interaction) => this.updateModel(interaction));
     }
 
-    public async initializeFromDatabase(): Promise<void> {
-        const databaseManager = DatabaseManager.getInstance();
-        const allInteractions = await databaseManager.getAllInteractions();
-        this.processHistoricalData(allInteractions);
-        this.predictNextAction(Date.now());
+    private ivMap: Map<string, string> = new Map();
+
+    private loadIvMap() {
+        const raw = localStorage.getItem('ivMap');
+        if (raw) this.ivMap = new Map(JSON.parse(raw));
+    }
+
+    private saveIvMap() {
+        localStorage.setItem('ivMap', JSON.stringify(Array.from(this.ivMap.entries())));
+    }
+
+    private async encryptDeterministic(data: string): Promise<{ ciphertext: string; iv: string }> {
+        // Если для этого actionType уже есть iv — берём его
+        let ivBase64 = this.ivMap.get(data);
+        if (!ivBase64) {
+          // Генерируем новый и сохраняем
+          const iv = crypto.getRandomValues(new Uint8Array(12));
+          ivBase64 = btoa(String.fromCharCode(...iv));
+          this.ivMap.set(data, ivBase64);
+          this.saveIvMap();
+        }
+        const ivBytes = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
+        const key = await this.getCryptoKey();
+        const encoded = new TextEncoder().encode(data);
+        const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: ivBytes }, key, encoded);
+        const ciphertext = btoa(String.fromCharCode(...new Uint8Array(ct)));
+        return { ciphertext, iv: ivBase64 };
+    }
+
+    private async getCryptoKey(): Promise<CryptoKey> {
+        return await crypto.subtle.importKey(
+            'raw',
+            ENCRYPTION_KEY,
+            { name: 'AES-GCM' },
+            false,
+            ['encrypt', 'decrypt']
+        );
+    }
+
+    private async encrypt(data: string): Promise<{ ciphertext: string; iv: string }> {
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const key = await this.getCryptoKey();
+        const encodedData = new TextEncoder().encode(data);
+        const ciphertext = await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv },
+            key,
+            encodedData
+        );
+        return {
+            ciphertext: btoa(String.fromCharCode(...new Uint8Array(ciphertext))),
+            iv: btoa(String.fromCharCode(...iv))
+        };
+    }
+
+    private async decrypt(ciphertext: string, iv: string): Promise<string> {
+        try {
+            const key = await this.getCryptoKey();
+            const ciphertextBytes = Uint8Array.from(atob(ciphertext), c => c.charCodeAt(0));
+            const ivBytes = Uint8Array.from(atob(iv), c => c.charCodeAt(0));
+            const decrypted = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: ivBytes },
+                key,
+                ciphertextBytes
+            );
+            return new TextDecoder().decode(decrypted);
+        } catch (error) {
+            console.error('Decryption error:', error);
+            throw error;
+        }
+    }
+
+    public async initialize(): Promise<void> {
+        try {
+            await this.registerApp();
+            this.scheduleDailyUpload();
+            const databaseManager = DatabaseManager.getInstance();
+            const allInteractions = await databaseManager.getAllInteractions();
+            this.processHistoricalData(allInteractions);
+            await this.checkAndFetchGlobalModel();
+            this.predictNextAction(Date.now());
+            console.log('PredictionModel initialized successfully. userHistory length:', this.userHistory.length);
+        } catch (error) {
+            console.error('Error initializing PredictionModel:', error);
+        }
+    }
+
+    public async forceUploadData(): Promise<void> {
+        console.log('Forcing data upload. userHistory:', this.userHistory);
+        await this.uploadAnonymizedData();
+    }
+
+    private async registerApp(): Promise<void> {
+        const storageKey = 'prediction_model_app_id';
+        let storedAppId = null;
+
+        if (typeof window !== 'undefined' && window.localStorage) {
+            storedAppId = localStorage.getItem(storageKey);
+        }
+
+        if (storedAppId) {
+            this.appId = storedAppId;
+            return;
+        }
+
+        try {
+            const response = await fetch(`${this.serverUrl}/register-app`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Failed to register app');
+            this.appId = data.appId;
+            if (typeof window !== 'undefined' && window.localStorage && this.appId) {
+                localStorage.setItem(storageKey, this.appId);
+            }
+            console.log('App registered with appId:', this.appId);
+        } catch (error) {
+            console.error('Error registering app:', error);
+            this.appId = 'fallback-' + Date.now();
+        }
+    }
+
+    private scheduleDailyUpload(): void {
+        const now = new Date();
+        const midnight = new Date(now);
+        midnight.setHours(24, 0, 0, 0);
+        const timeUntilMidnight = midnight.getTime() - now.getTime();
+
+        setTimeout(() => {
+            this.uploadAnonymizedData();
+            this.dailyUploadInterval = setInterval(() => this.uploadAnonymizedData(), 24 * 60 * 60 * 1000);
+        }, timeUntilMidnight);
+    }
+    
+    private async uploadAnonymizedData(): Promise<void> {
+        if (!this.userHistory.length || !this.appId) return;
+    
+        // Агрегируем локально
+        const counts: Record<string, number> = {};
+        this.userHistory.forEach(({ actionType }) => {
+          counts[actionType] = (counts[actionType] || 0) + 1;
+        });
+    
+        // Шифруем детерминированно
+        const anonymizedData: Array<{ actionType: string; actionTypeIV: string; count: number }> = [];
+        for (const [actionType, count] of Object.entries(counts)) {
+          const { ciphertext, iv } = await this.encryptDeterministic(actionType);
+          anonymizedData.push({ actionType: ciphertext, actionTypeIV: iv, count });
+        }
+    
+        // Отправляем один запрос
+        try {
+          const res = await fetch(`${this.serverUrl}/upload-anonymous-data`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ appId: this.appId, interactions: anonymizedData })
+          });
+          if (!res.ok) throw new Error(res.statusText);
+          console.log('Данные отправлены:', anonymizedData);
+        } catch (e) {
+          console.error('Ошибка отправки:', e);
+        }
+      }
+      
+
+    private async checkAndFetchGlobalModel(): Promise<void> {
+        if (this.userHistory.length >= this.minActionsThreshold && this.transitionMatrix.size > 0 || !this.appId) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`${this.serverUrl}/global-model/${this.appId}`);
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Failed to fetch global model');
+
+            this.globalActionCounter = new Map();
+            for (const [encryptedAction, count] of Object.entries(data.globalActionCounter)) {
+                const decryptedAction = await this.decrypt(encryptedAction, data.globalActionCounterIVs[encryptedAction]);
+                this.globalActionCounter.set(decryptedAction, Number(count));
+            }
+
+            this.timePatterns = new Map();
+            for (const [encryptedAction, hours] of Object.entries(data.timePatterns)) {
+                const decryptedAction = await this.decrypt(encryptedAction, data.timePatternsIVs[encryptedAction]);
+                const hourMap = new Map(Object.entries(hours as Record<string, number>).map(([h, c]) => [Number(h), Number(c)]));
+                this.timePatterns.set(decryptedAction, hourMap);
+            }
+            console.log('Global model fetched successfully');
+        } catch (error) {
+            console.error('Error fetching global model:', error);
+        }
     }
 
     private processHistoricalData(interactions: InteractionRecord[]): void {
@@ -179,10 +384,8 @@ class PredictionModel {
 
     public predictNextAction(timestamp: number) {
         const history = this.userHistory;
-        if (!history.length) {
-            const fallback = this.getMostFrequentAction();
-            const componentId = fallback ? this.componentTracker.getComponentByAction(fallback) : null;
-            return { action: fallback, componentId };
+        if (!history.length && !this.globalActionCounter.size) {
+            return { action: null, componentId: null };
         }
 
         const seqProbs = this.getSequenceProbabilities();
@@ -221,6 +424,7 @@ class PredictionModel {
 
 const predictionModelInstance = new PredictionModel();
 (async () => {
-    await predictionModelInstance.initializeFromDatabase();
+    await predictionModelInstance.initialize();
 })();
+
 export default predictionModelInstance;

@@ -1,4 +1,7 @@
 import { defineConfig } from 'tsup';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 export default defineConfig({
   entry: ['src/index.ts'],        // Главный файл
@@ -7,5 +10,10 @@ export default defineConfig({
   clean: true,                    // Очистить dist перед сборкой
   dts: true,                      // Генерация .d.ts типов
   format: ['cjs', 'esm'],         // Вывод в двух форматах: CommonJS и ES Module
-  minify: true                    // Минификация
+  minify: true,  
+  esbuildOptions(options) {
+    options.define = {
+      'process.env.ENCRYPTION_KEY': JSON.stringify(process.env.ENCRYPTION_KEY),
+    };
+  },
 });
