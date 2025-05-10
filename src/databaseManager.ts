@@ -2,7 +2,6 @@ export interface InteractionRecord {
   componentId: string;
   actionType: string;
   timestamp: number;
-  metadata?: Record<string, any>;
 }
 
 type InteractionCallback = (interaction: InteractionRecord) => void;
@@ -109,7 +108,6 @@ class DatabaseManager {
       componentId: encryptedComponentId.ciphertext,
       componentIdIV: encryptedComponentId.iv,
       timestamp: interaction.timestamp,
-      metadata: interaction.metadata
     };
 
     const request = indexedDB.open(this.dbName);
@@ -170,7 +168,6 @@ class DatabaseManager {
               actionType: decryptedActionType,
               componentId: decryptedComponentId,
               timestamp: record.timestamp,
-              metadata: record.metadata
             });
           }
 
@@ -232,8 +229,7 @@ class DatabaseManager {
               resolve({
                 actionType: decryptedActionType,
                 componentId: decryptedComponentId,
-                timestamp: record.timestamp,
-                metadata: record.metadata
+                timestamp: record.timestamp
               });
               return;
             }

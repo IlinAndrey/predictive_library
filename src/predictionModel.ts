@@ -43,7 +43,7 @@ class PredictionModel {
         serverUrl: string = 'http://localhost:3001',
         historyLength = 100,
         decayLambda = 0.0005,
-        smoothingFactor = 1,
+        smoothingFactor = 0.1,
         weightSequence = 0.7,
         weightTime = 0.3,
         maxPatternLength = 5,
@@ -82,10 +82,8 @@ class PredictionModel {
     }
 
     private async encryptDeterministic(data: string): Promise<{ ciphertext: string; iv: string }> {
-        // Если для этого actionType уже есть iv — берём его
         let ivBase64 = this.ivMap.get(data);
         if (!ivBase64) {
-          // Генерируем новый и сохраняем
           const iv = crypto.getRandomValues(new Uint8Array(12));
           ivBase64 = btoa(String.fromCharCode(...iv));
           this.ivMap.set(data, ivBase64);
@@ -203,24 +201,21 @@ class PredictionModel {
             this.dailyUploadInterval = setInterval(() => this.uploadAnonymizedData(), 24 * 60 * 60 * 1000);
         }, timeUntilMidnight);
     }
-    
+
     private async uploadAnonymizedData(): Promise<void> {
         if (!this.userHistory.length || !this.appId) return;
     
-        // Агрегируем локально
         const counts: Record<string, number> = {};
         this.userHistory.forEach(({ actionType }) => {
           counts[actionType] = (counts[actionType] || 0) + 1;
         });
     
-        // Шифруем детерминированно
         const anonymizedData: Array<{ actionType: string; actionTypeIV: string; count: number }> = [];
         for (const [actionType, count] of Object.entries(counts)) {
           const { ciphertext, iv } = await this.encryptDeterministic(actionType);
           anonymizedData.push({ actionType: ciphertext, actionTypeIV: iv, count });
         }
     
-        // Отправляем один запрос
         try {
           const res = await fetch(`${this.serverUrl}/upload-anonymous-data`, {
             method: 'POST',
